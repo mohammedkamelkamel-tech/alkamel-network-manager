@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Java 17
@@ -19,22 +19,26 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Extract project ZIP
+      - name: Extract project
         run: |
+          rm -rf project
           mkdir project
-          unzip -o card-manager-native-v2-full.zip -d project
+          unzip -o alkamel-network-manager-complete-v2.zip -d project
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.7'
+      - name: Find project root
+        run: |
+          echo "Project contents:"
+          find project -maxdepth 2 -type f | head -50
 
       - name: Build APK
         working-directory: project
-        run: gradle --no-daemon assembleDebug
+        run: |
+          chmod +x gradlew 2>/dev/null || true
+          ./gradlew assembleDebug --no-daemon || gradle assembleDebug --no-daemon
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: alkamel-network-manager-apk
-          path: project/app/build/outputs/apk/debug/app-debug.apk
+          path: |
+            project/**/build/outputs/apk/debug/*.apk
