@@ -23,12 +23,12 @@ jobs:
         run: |
           rm -rf project
           mkdir project
-          unzip -o alkamel-network-manager-complete-v2.zip -d project
+          unzip -o alkamel-network-manager-complete-v2-fixed.zip -d project
 
       - name: Find project root
         run: |
           echo "Project contents:"
-          find project -maxdepth 2 -type f | head -50
+          find project -maxdepth 3 -type f | head -100
 
       - name: Build APK
         working-directory: project
