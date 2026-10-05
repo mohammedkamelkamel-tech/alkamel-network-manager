@@ -66,10 +66,7 @@ jobs:
               s=s.replace(old,new)
               needle='Button t=btn("📦 تسليم كروت لعامل — لا يخصم من المخزون العام",BLUE);t.setOnClickListener(v->showTransfer());add(t);'
               s=s.replace(needle,needle+'Button sim=btn("📱 إدارة مخزون SIM1 / SIM2",BLUE);sim.setOnClickListener(v->showStock());add(sim);')
-              olddash='add(tv("المخزون العام\n100: "+s[0]+"   200: "+s[1]+"   250: "+s[2]+"   500: "+s[3]+"\nقيمة المخزون: "+money(db.totalStockValue())+" ريال\nالعمال: "'
-              newdash='add(tv("المخزون العام\n100: "+s[0]+"   200: "+s[1]+"   250: "+s[2]+"   500: "+s[3]+"\nقيمة المخزون: "+money(db.totalStockValue())+" ريال\nSIM1: "+db.totalSimCards(1)+" كرت / "+money(db.totalSimStockValue(1))+" ريال\nSIM2: "+db.totalSimCards(2)+" كرت / "+money(db.totalSimStockValue(2))+" ريال\nالعمال: "'
-              if olddash not in s: raise SystemExit('MainActivity dashboard pattern not found')
-              return s.replace(olddash,newdash)
+              return s
           edit('app/src/main/java/com/alkamel/cards/MainActivity.java',mainedit)
           PY
       - name: Build v1.10.0
