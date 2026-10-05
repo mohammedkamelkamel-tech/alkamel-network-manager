@@ -25,6 +25,18 @@ jobs:
           mkdir project
           unzip -o alkamel-network-manager-complete-v2-fixed.zip -d project
 
+      - name: Export extracted source
+        run: |
+          cd project
+          zip -qr ../alkamel-source-extracted.zip .
+        shell: bash
+
+      - name: Upload extracted source
+        uses: actions/upload-artifact@v4
+        with:
+          name: alkamel-source-extracted
+          path: alkamel-source-extracted.zip
+
       - name: Find project root
         run: |
           echo "Project contents:"
