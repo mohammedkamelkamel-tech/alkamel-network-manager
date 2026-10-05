@@ -1,0 +1,82 @@
+name: Build APK v1.10.0
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-v1.10.0.yml'
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare source v1.10.0
+        shell: bash
+        run: |
+          rm -rf build-v110
+          unzip -q alkamel-network-manager-complete-v2-fixed.zip -d build-v110
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path('build-v110')
+          def edit(rel, fn):
+              p=root/rel; s=p.read_text(); s2=fn(s)
+              if s2==s: raise SystemExit(f'No changes made to {rel}; source mismatch')
+              p.write_text(s2)
+          edit('app/build.gradle', lambda s:s.replace("versionCode 1; versionName '1.0.0'","versionCode 10; versionName '1.10.0'"))
+          def dbedit(s):
+              s=s.replace('public static final int DB_VERSION=4;','public static final int DB_VERSION=5;')
+              s=s.replace('        db.execSQL("CREATE TABLE stock(denom INTEGER PRIMARY KEY, qty INTEGER NOT NULL DEFAULT 0)");','        db.execSQL("CREATE TABLE stock(denom INTEGER PRIMARY KEY, qty INTEGER NOT NULL DEFAULT 0)");\n        db.execSQL("CREATE TABLE sim_stock(sim INTEGER NOT NULL, denom INTEGER NOT NULL, qty INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(sim,denom), CHECK(sim IN(1,2)))");\n        for(int sim=1;sim<=2;sim++) for(int d:DENOMS) db.execSQL("INSERT INTO sim_stock VALUES("+sim+","+d+",0)");')
+              s=s.replace('        if(oldV<4){/* reserved for future migrations */}','''        if(oldV<4){/* reserved for future migrations */}
+          if(oldV<5){
+              db.execSQL("CREATE TABLE IF NOT EXISTS sim_stock(sim INTEGER NOT NULL, denom INTEGER NOT NULL, qty INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(sim,denom), CHECK(sim IN(1,2)))");
+              for(int sim=1;sim<=2;sim++) for(int d:DENOMS) db.execSQL("INSERT OR IGNORE INTO sim_stock VALUES("+sim+","+d+",0)");
+              for(int d:DENOMS){Cursor x=db.rawQuery("SELECT qty FROM stock WHERE denom=?",new String[]{""+d});try{if(x.moveToFirst()){ContentValues v=new ContentValues();v.put("qty",x.getInt(0));db.update("sim_stock",v,"sim=1 AND denom=?",new String[]{""+d});}}finally{x.close();}}
+          }''')
+              marker='    public long addWorker('
+              ins='''    public int simStock(int sim,int d){if(sim<1||sim>2)throw new IllegalArgumentException("الشريحة يجب أن تكون SIM1 أو SIM2");Cursor c=getReadableDatabase().rawQuery("SELECT qty FROM sim_stock WHERE sim=? AND denom=?",new String[]{""+sim,""+d});try{return c.moveToFirst()?c.getInt(0):0;}finally{c.close();}}
+          public int[] simStock(int sim){if(sim<1||sim>2)throw new IllegalArgumentException("الشريحة يجب أن تكون SIM1 أو SIM2");int[] a=new int[4];Cursor c=getReadableDatabase().rawQuery("SELECT denom,qty FROM sim_stock WHERE sim=?",new String[]{""+sim});try{while(c.moveToNext())for(int i=0;i<4;i++)if(DENOMS[i]==c.getInt(0))a[i]=c.getInt(1);}finally{c.close();}return a;}
+          public void setSimStock(int sim,int d,int q){if(sim<1||sim>2)throw new IllegalArgumentException("الشريحة يجب أن تكون SIM1 أو SIM2");if(q<0)throw new IllegalArgumentException("الكمية لا يمكن أن تكون سالبة");ContentValues v=new ContentValues();v.put("qty",q);getWritableDatabase().update("sim_stock",v,"sim=? AND denom=?",new String[]{""+sim,""+d});}
+          public int totalSimStockValue(int sim){int s=0;int[] a=simStock(sim);for(int i=0;i<4;i++)s+=a[i]*DENOMS[i];return s;}
+          public int totalSimCards(int sim){int s=0;for(int q:simStock(sim))s+=q;return s;}
+          '''
+              s=s.replace(marker,ins+marker)
+              s=s.replace('r.put("stock",simpleTable("stock"));r.put("workers"','r.put("stock",simpleTable("stock"));r.put("sim_stock",simpleTable("sim_stock"));r.put("workers"')
+              old='''    public void restoreFull(String json)throws Exception{JSONObject r=new JSONObject(json);SQLiteDatabase d=getWritableDatabase();d.beginTransaction();try{for(String t:new String[]{"op_items","ops","points","workers","stock"})d.delete(t,null,null);restoreTable(d,r.getJSONArray("stock"),"stock");restoreTable(d,r.getJSONArray("workers"),"workers");restoreTable(d,r.getJSONArray("points"),"points");restoreTable(d,r.getJSONArray("ops"),"ops");restoreTable(d,r.getJSONArray("op_items"),"op_items");d.setTransactionSuccessful();}finally{d.endTransaction();}}'''
+              new='''    public void restoreFull(String json)throws Exception{JSONObject r=new JSONObject(json);SQLiteDatabase d=getWritableDatabase();d.beginTransaction();try{for(String t:new String[]{"op_items","ops","points","workers","sim_stock","stock"})d.delete(t,null,null);restoreTable(d,r.getJSONArray("stock"),"stock");if(r.has("sim_stock"))restoreTable(d,r.getJSONArray("sim_stock"),"sim_stock");else{JSONArray st=r.getJSONArray("stock");for(int i=0;i<st.length();i++){JSONObject o=st.getJSONObject(i);ContentValues a=new ContentValues();a.put("sim",1);a.put("denom",o.getInt("denom"));a.put("qty",o.getInt("qty"));d.insertOrThrow("sim_stock",null,a);}for(int d0:DENOMS){ContentValues a=new ContentValues();a.put("sim",2);a.put("denom",d0);a.put("qty",0);d.insertOrThrow("sim_stock",null,a);}}restoreTable(d,r.getJSONArray("workers"),"workers");restoreTable(d,r.getJSONArray("points"),"points");restoreTable(d,r.getJSONArray("ops"),"ops");restoreTable(d,r.getJSONArray("op_items"),"op_items");d.setTransactionSuccessful();}finally{d.endTransaction();}}'''
+              if old not in s: raise SystemExit('DatabaseHelper restoreFull pattern not found')
+              return s.replace(old,new)
+          edit('app/src/main/java/com/alkamel/cards/DatabaseHelper.java',dbedit)
+          def backupedit(s):
+              s=s.replace('root.put("stock",stock);','root.put("stock",stock);\n        root.put("sim_stock",table("sim_stock"));')
+              s=s.replace('d.delete("op_items",null,null);d.delete("ops",null,null);d.delete("points",null,null);d.delete("workers",null,null);d.delete("stock",null,null);','d.delete("op_items",null,null);d.delete("ops",null,null);d.delete("points",null,null);d.delete("workers",null,null);d.delete("sim_stock",null,null);d.delete("stock",null,null);')
+              old='if(root.has("sim_stock")) restoreTable(d,root.getJSONArray("sim_stock"),"sim_stock"); else { for(int d0:DatabaseHelper.DENOMS){ContentValues v=new ContentValues();v.put("sim",1);v.put("denom",d0);v.put("qty",0);d.insertOrThrow("sim_stock",null,v);ContentValues w=new ContentValues();w.put("sim",2);w.put("denom",d0);w.put("qty",0);d.insertOrThrow("sim_stock",null,w);} }'
+              new='if(root.has("sim_stock")) restoreTable(d,root.getJSONArray("sim_stock"),"sim_stock"); else { for(int d0:DatabaseHelper.DENOMS){Cursor old=db.getReadableDatabase().rawQuery("SELECT qty FROM stock WHERE denom=?",new String[]{""+d0});int q0=0;try{if(old.moveToFirst())q0=old.getInt(0);}finally{old.close();}ContentValues v=new ContentValues();v.put("sim",1);v.put("denom",d0);v.put("qty",q0);d.insertOrThrow("sim_stock",null,v);ContentValues w=new ContentValues();w.put("sim",2);w.put("denom",d0);w.put("qty",0);d.insertOrThrow("sim_stock",null,w);} }'
+              if old not in s: raise SystemExit('BackupHelper fallback pattern not found')
+              return s.replace(old,new)
+          edit('app/src/main/java/com/alkamel/cards/BackupHelper.java',backupedit)
+          def mainedit(s):
+              old=''' void showStock(){base("المخزون العام");title("المخزون العام — لا ينقص عند تسليم العامل");for(int d:D){LinearLayout c=card();c.addView(tv("فئة "+d+" — الحالي: "+db.stock(d),18));EditText e=input("تعديل الكمية");e.setInputType(2);e.setText(""+db.stock(d));c.addView(e);Button s=btn("حفظ",GREEN);s.setOnClickListener(v->{try{db.setStock(d,Integer.parseInt(e.getText().toString()));toast("تم الحفظ");showStock();}catch(Exception ex){toast(ex.getMessage());}});c.addView(s);add(c);}nav(true);}'''
+              new=''' void showStock(){base("المخزون");title("📦 المخزون العام + مخزون الشرائح");add(tv("اختر الشريحة لإدارة مخزونها بشكل مستقل. مخزون SIM1 وSIM2 منفصل تمامًا عن بعضهما وعن المخزون العام.",15));
+          LinearLayout tabs=new LinearLayout(this);tabs.setOrientation(LinearLayout.HORIZONTAL);
+          Button general=btn("المخزون العام",DARK),sim1=btn("📱 SIM1",BLUE),sim2=btn("📱 SIM2",BLUE);tabs.addView(general,new LinearLayout.LayoutParams(0,58,1));tabs.addView(sim1,new LinearLayout.LayoutParams(0,58,1));tabs.addView(sim2,new LinearLayout.LayoutParams(0,58,1));add(tabs);
+          LinearLayout body=new LinearLayout(this);body.setOrientation(LinearLayout.VERTICAL);add(body);
+          Runnable renderGeneral=()->{body.removeAllViews();body.addView(tv("المخزون العام — يستخدم في عمليات التوزيع الحالية",18));for(int d:D){LinearLayout c=card();c.addView(tv("فئة "+d+" — الحالي: "+db.stock(d),18));EditText e=input("تعديل الكمية");e.setInputType(2);e.setText(""+db.stock(d));c.addView(e);Button s=btn("حفظ",GREEN);s.setOnClickListener(v->{try{db.setStock(d,Integer.parseInt(e.getText().toString()));toast("تم حفظ المخزون العام");showStock();}catch(Exception ex){toast(ex.getMessage());}});c.addView(s);body.addView(c);}body.addView(tv("قيمة المخزون العام: "+money(db.totalStockValue())+" ريال",17));};
+          java.util.function.IntConsumer renderSim=(sim)->{body.removeAllViews();body.addView(tv("📱 مخزون SIM"+sim+" — مستقل عن SIM"+(sim==1?"2":"1"),18));int[] ss=db.simStock(sim);for(int i=0;i<D.length;i++){final int d=D[i];LinearLayout c=card();c.addView(tv("فئة "+d+" — المتبقي: "+ss[i]+" كرت",18));EditText e=input("عدد الكروت");e.setInputType(2);e.setText(""+ss[i]);c.addView(e);Button save=btn("حفظ مخزون SIM"+sim,GREEN);save.setOnClickListener(v->{try{db.setSimStock(sim,d,Integer.parseInt(e.getText().toString()));toast("تم حفظ مخزون SIM"+sim);showStock();}catch(Exception ex){toast(ex.getMessage());}});c.addView(save);body.addView(c);}body.addView(tv("إجمالي كروت SIM"+sim+": "+db.totalSimCards(sim)+"\nقيمة المخزون: "+money(db.totalSimStockValue(sim))+" ريال",17));body.addView(tv("⚠️ هذا المخزون لا يغيّر المخزون العام تلقائيًا. ويجب اختيار الشريحة الصحيحة عند ربطه بخدمة الإرسال التلقائي.",14));};
+          general.setOnClickListener(v->renderGeneral.run());sim1.setOnClickListener(v->renderSim.accept(1));sim2.setOnClickListener(v->renderSim.accept(2));renderSim.accept(1);nav(true);}'''
+              if old not in s: raise SystemExit('MainActivity showStock pattern not found')
+              s=s.replace(old,new)
+              needle='Button t=btn("📦 تسليم كروت لعامل — لا يخصم من المخزون العام",BLUE);t.setOnClickListener(v->showTransfer());add(t);'
+              s=s.replace(needle,needle+'Button sim=btn("📱 إدارة مخزون SIM1 / SIM2",BLUE);sim.setOnClickListener(v->showStock());add(sim);')
+              olddash='add(tv("المخزون العام\n100: "+s[0]+"   200: "+s[1]+"   250: "+s[2]+"   500: "+s[3]+"\nقيمة المخزون: "+money(db.totalStockValue())+" ريال\nالعمال: "'
+              newdash='add(tv("المخزون العام\n100: "+s[0]+"   200: "+s[1]+"   250: "+s[2]+"   500: "+s[3]+"\nقيمة المخزون: "+money(db.totalStockValue())+" ريال\nSIM1: "+db.totalSimCards(1)+" كرت / "+money(db.totalSimStockValue(1))+" ريال\nSIM2: "+db.totalSimCards(2)+" كرت / "+money(db.totalSimStockValue(2))+" ريال\nالعمال: "'
+              if olddash not in s: raise SystemExit('MainActivity dashboard pattern not found')
+              return s.replace(olddash,newdash)
+          edit('app/src/main/java/com/alkamel/cards/MainActivity.java',mainedit)
+          PY
+      - name: Build v1.10.0
+        working-directory: build-v110
+        run: gradle --no-daemon assembleDebug
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: AlKamelOnline-v1.10.0
+          path: build-v110/app/build/outputs/apk/debug/app-debug.apk
